@@ -12,6 +12,8 @@ import java.io.OutputStream
 import java.net.Socket
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class MainActivity : Activity(), SensorEventListener {
     private lateinit var binding: ActivityMainBinding
@@ -20,7 +22,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var accelSensor: Sensor? = null
 
     // PC의 IP와 포트 (PC에서 Python 서버 실행 중이어야 함)
-    private val serverIP = "192.168.0.2"   // 집 Wi-Fi 환경에서 PC IP 입력
+    private val serverIP = "10.0.2.2"   // 집 Wi-Fi 환경에서 PC IP 입력
     private val serverPort = 9090
     private var socket: Socket? = null
     private var output: OutputStream? = null
@@ -41,22 +43,15 @@ class MainActivity : Activity(), SensorEventListener {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // ✅ JSON 로드 → KNN 초기화
+        // JSON 로드 → KNN 초기화
         val samples = loadSamplesFromAssets()
-        knn = KNNClassifier(2, samples)
+        knn = KNNClassifier(2, samples, rejectThreshold = 2.0f)
         binding.statusText.text = "Loaded ${samples.size} samples"
 
         binding.statusText.text = "Starting"
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-
-        // KNN 학습 데이터 로드
-        val samples = listOf(
-            GestureSample(floatArrayOf(1f, 0f, 0f), "LEFT"),
-            GestureSample(floatArrayOf(0f, 1f, 0f), "RIGHT")
-        )
-        knn = KNNClassifier(2, samples, rejectThreshold = 2.0f)
 
         // 서버 연결 (별도 스레드에서 실행)
         thread {
@@ -97,7 +92,9 @@ class MainActivity : Activity(), SensorEventListener {
             if (windowData.size >= windowSize) {
                 val features = FeatureExtractor.extract(windowData)
                 val label = knn.classify(features)
-                sendGesture(label)
+                if (label != "UNKNOWN") {
+                    sendGesture(label)
+                }
                 windowData.clear()
             }
         }
@@ -109,10 +106,11 @@ class MainActivity : Activity(), SensorEventListener {
         val now = System.currentTimeMillis()
         if (now - lastTriggerTime < debounceMs) return
         lastTriggerTime = now
+        val msg = if (label == "PinchL") "LEFT" else "RIGHT"
 
         thread {
             try {
-                output?.write("$label\n".toByteArray())
+                output?.write("$msg\n".toByteArray())
                 output?.flush()
                 runOnUiThread { binding.statusText.text = label }
             } catch (e: Exception) {
