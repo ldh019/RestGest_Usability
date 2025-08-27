@@ -1,0 +1,14 @@
+[versions]
+agp = "8.3.2"
+kotlin = "1.9.0"
+playServicesWearable = "19.0.0"
+wear = "1.3.0"
+
+[libraries]
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
+wear = { group = "androidx.wear", name = "wear", version.ref = "wear" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+jetbrainsKotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+
