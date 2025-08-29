@@ -7,16 +7,11 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Log
-import com.example.flappybird.FeatureExtractor.projectPCA
 import com.example.flappybird.databinding.ActivityMainBinding
 import java.io.OutputStream
 import java.net.Socket
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import com.opencsv.CSVReader
-import java.io.InputStreamReader
 
 class MainActivity : Activity(), SensorEventListener {
     private lateinit var binding: ActivityMainBinding
@@ -26,42 +21,35 @@ class MainActivity : Activity(), SensorEventListener {
     private var gyroSensor: Sensor? = null
 
     // PC의 IP와 포트 (PC에서 Python 서버 실행 중이어야 함)
-    private val serverIP = "192.168.0.3"   // 집 Wi-Fi 환경에서 PC IP 입력
+    private val serverIP = "192.168.0.7"   // 집 Wi-Fi 환경에서 PC IP 입력
     private val serverPort = 9090
     private var socket: Socket? = null
     private var output: OutputStream? = null
 
-    private val debounceMs = 1000L
-    private var lastTriggerTime = 0L
+    // detection 파라미터
+    private val phoneWindow = 400
+    private val phoneSearchWindow = (phoneWindow * 0.5).toInt()      // MATLAB X=0.5
+    private val phoneThresholdWindow = (phoneWindow * 1.0).toInt()   // MATLAB Y=1
+    private val thresholdParam = 1.3f                               // MATLAB alpha=1.3
 
-    // 데이터 윈도우
-    private val windowSize = 400
-    private val stepSize = windowSize / 4 // 100
+    private val bufferSize = phoneWindow * 2
 
+    // 버퍼
     private val accelWindow = ArrayList<FloatArray>()
     private val gyroWindow = ArrayList<FloatArray>()
+    private val mags = ArrayList<Float>()
 
-    // KNN 분류기
-    private lateinit var knn: KNNClassifier
-
-    private lateinit var pcaMatrix: Array<FloatArray>
+    // energy / noise 계산용
+    private val energyBuffer = ArrayDeque<Float>()
+    private val noiseBuffer = ArrayDeque<Float>()
+    private var energySum = 0f
+    private var noiseSum = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        // JSON 로드 → KNN 초기화
-
-        pcaMatrix = loadPCAMatrix()
-        val samples = loadSamplesFromCsv()
-        val reducedSamples = samples.map {
-            val reduced = projectPCA(it.features, pcaMatrix)
-            GestureSample(reduced, it.label)
-        }
-        knn = KNNClassifier(5, reducedSamples)
-        binding.statusText.text = "Loaded ${samples.size} samples"
 
         binding.statusText.text = "Starting"
 
@@ -108,133 +96,135 @@ class MainActivity : Activity(), SensorEventListener {
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                accelWindow.add(floatArrayOf(event.values[0], event.values[1], event.values[2] - 9.8f))
+                val ax = event.values[0]
+                val ay = event.values[1]
+                val az = event.values[2] - 9.8f
+                accelWindow.add(floatArrayOf(ax, ay, az))
+
+                val mag = sqrt(ax*ax + ay*ay + az*az)
+                mags.add(mag)
             }
+
             Sensor.TYPE_GYROSCOPE -> {
                 gyroWindow.add(floatArrayOf(event.values[0], event.values[1], event.values[2]))
             }
         }
 
-//        // 둘 다 충분히 쌓였을 때 처리
-//        if (accelWindow.size >= windowSize && gyroWindow.size >= windowSize) {
-//            if (!shouldTrigger(accelWindow, gyroWindow)) {
-//                binding.statusText.text = "IDLE"
-//                accelWindow.subList(0, stepSize).clear()
-//                gyroWindow.subList(0, stepSize).clear()
-//                return
-//            }
-//
-//            val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
-//            val gyroFeatures  = FeatureExtractor.extractFFT(gyroWindow.subList(0, windowSize))
-//
-//            val combinedFeatures = accelFeatures + gyroFeatures
-//
-//            val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
-//
-//            Log.d("WatchApp", "Coordinate: ${reducedAccel.joinToString(",")}")
-//
-//            val label = knn.classify(reducedAccel)
-//            if (label != "UNKNOWN") sendGesture(label)
-//
-//            accelWindow.subList(0, stepSize).clear()
-//            gyroWindow.subList(0, stepSize).clear()
-//        }
+        // 충분히 모였을 때만 계산
+        if (accelWindow.size >= phoneWindow && gyroWindow.size >= phoneWindow) {
+            // MATLAB: phoneEnergy = movmean(..., searchWindow)
+            val energyAvg = mags.takeLast(phoneSearchWindow).average()
 
-        if (accelWindow.size >= windowSize) {
-            if (!shouldTrigger(accelWindow)) {
-                binding.statusText.text = "IDLE"
-                accelWindow.subList(0, stepSize).clear()
+            // MATLAB: phoneNoise = movmean(..., thresholdWindow) * alpha
+            val noiseAvg = mags.takeLast(phoneThresholdWindow).average() * thresholdParam
+
+            if (energyAvg <= noiseAvg) {
+                // MATLAB: phoneIdx = phoneIdx + 1
+                // → 여기서는 그냥 한 스텝씩 버퍼를 슬라이드
+                accelWindow.removeAt(0)
+                gyroWindow.removeAt(0)
+                mags.removeAt(0)
+                binding.statusText.text = "No Gesture"
                 return
             }
 
-            val aligned = alignWindow(accelWindow, windowSize)
-            if (aligned != null) {
-                val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
-                val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
+            // MATLAB: detection 발생
+            binding.statusText.text = "Gesture Detected"
+            Log.d("WatchApp", "Gesture Detected")
 
-                val label = knn.classifyN(reducedAccel)
-                if (label != "UNKNOWN") sendGesture(label)
+            // peak 중심 잡기 (phoneStartIdx = phoneIdx - 0.2*window)
+            val peakIdx = mags.indices.maxByOrNull { mags[it] } ?: 0
+            val startIdx = (peakIdx - (0.2 * phoneWindow).toInt()).coerceAtLeast(0)
+            val endIdx = (startIdx + phoneWindow).coerceAtMost(accelWindow.size)
+
+            if (endIdx - startIdx == phoneWindow) {
+                val combinedWindow = mutableListOf<DoubleArray>()
+                for (i in startIdx until endIdx) {
+                    val row = doubleArrayOf(
+                        accelWindow[i][0].toDouble(), accelWindow[i][1].toDouble(), accelWindow[i][2].toDouble(),
+                        gyroWindow[i][0].toDouble(),  gyroWindow[i][1].toDouble(),  gyroWindow[i][2].toDouble()
+                    )
+                    combinedWindow.add(row)
+                }
+
+                sendWindowToPC(combinedWindow)
+                binding.statusText.text = "Gesture Sent!"
+                Log.d("WatchApp", "Window extracted")
+
+                // MATLAB: phoneIdx = phoneIdx + phoneWindow
+                // → 여기서는 windowSize 만큼 버퍼에서 제거
+                accelWindow.subList(0, endIdx).clear()
+                gyroWindow.subList(0, endIdx).clear()
+                mags.subList(0, endIdx).clear()
             }
-            accelWindow.subList(0, stepSize).clear()
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun alignWindow(window: List<FloatArray>, size: Int): List<FloatArray>? {
-        // z축 가속도의 절대값이 가장 큰 지점을 가운데로 맞춤
-        val mags = window.map { v ->
-            sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
-        }
-
-        val peakIdx = mags.indices.maxByOrNull { mags[it] } ?: return null
-        val half = size / 2
-
-        val start = (peakIdx - half).coerceAtLeast(0)
-        val end = (start + size).coerceAtMost(window.size)
-
-        if (end - start < size) return null
-
-        return window.subList(start, start + size)
-    }
-
-    private fun shouldTrigger(accelWindow: List<FloatArray>, gyroWindow: List<FloatArray> = emptyList(), threshold: Float = 0.5f): Boolean {
-        // window: [ [ax,ay,az], ... ]
-        val mags = accelWindow.map { v ->
-            sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
-        }
-        val peak = mags.maxOrNull() ?: 0f
-        if (peak > threshold) {
-            Log.d("WatchApp", "Peak magnitude: $peak")
-        }
-        return peak > threshold
-    }
-
-    private fun sendGesture(label: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastTriggerTime < debounceMs) return
-        lastTriggerTime = now
-        val msg = if (label == "pinchL") "LEFT" else "RIGHT"
-
+    private fun sendWindowToPC(window: List<DoubleArray>) {
         thread {
             try {
-                output?.write("$msg\n".toByteArray())
+                val sb = StringBuilder()
+                sb.append("[START]\n")
+                for (row in window) {
+                    sb.append(row.joinToString(","))
+                    sb.append("\n")
+                }
+                sb.append("[END]\n")
+
+                output?.write(sb.toString().toByteArray())
                 output?.flush()
-                runOnUiThread { binding.statusText.text = label }
+
+                Log.d("WatchApp", "Window sent: ${window.size} rows")
             } catch (e: Exception) {
+                Log.e("WatchApp", "Send failed: ${e.message}")
                 runOnUiThread { binding.statusText.text = "Send Failed" }
             }
         }
     }
 
-    private fun loadSamplesFromCsv(fileName: String = "fft_features.csv"): List<GestureSample> {
-        val samples = mutableListOf<GestureSample>()
-        val inputStream = assets.open(fileName)
-        val reader = CSVReader(InputStreamReader(inputStream))
-
-        val allRows = reader.readAll()
-        val header = allRows[0]  // 첫 줄은 헤더
-        val dataRows = allRows.drop(1)
-
-        for (row in dataRows) {
-            val label = row[0]  // class 열
-            val features = row.drop(1).map { it.toFloat() }.toFloatArray().slice(400 until 600).toFloatArray()
-
-            samples.add(GestureSample(features, label))
-        }
-
-        return samples
+    private fun extractWindow(window: List<FloatArray>, size: Int): List<FloatArray>? {
+        val mags = window.map { v -> sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) }
+        val peakIdx = mags.indices.maxByOrNull { mags[it] } ?: return null
+        val half = size / 2
+        val start = (peakIdx - half).coerceAtLeast(0)
+        val end = (start + size).coerceAtMost(window.size)
+        if (end - start < size) return null
+        return window.subList(start, start + size)
     }
 
-    private fun loadPCAMatrix(fileName: String = "pca_accel_z.csv"): Array<FloatArray> {
-        val inputStream = assets.open(fileName)
-        val reader = CSVReader(InputStreamReader(inputStream))
-
-        val allRows = reader.readAll()
-        // CSV는 숫자만 들어있다고 가정 (header 없음)
-        return Array(allRows.size) { i ->
-            allRows[i].map { it.toFloat() }.toFloatArray()
+    private fun shouldTrigger(
+        accelWindow: List<FloatArray>,
+        threshold: Float = 0.5f
+    ): Boolean {
+        val mags = accelWindow.map { v ->
+            sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
         }
+        val peak = mags.maxOrNull() ?: 0f
+        return peak > threshold
     }
 
+    // MATLAB movmean 대응 함수
+    private fun updateDetection(ax: Float, ay: Float, az: Float): Boolean {
+        val mag = sqrt(ax*ax + ay*ay + az*az)
+
+        // energy (short window average)
+        energyBuffer.addLast(mag)
+        energySum += mag
+        if (energyBuffer.size > phoneSearchWindow) {
+            energySum -= energyBuffer.removeFirst()
+        }
+        val energyAvg = energySum / energyBuffer.size
+
+        // noise (long window average)
+        noiseBuffer.addLast(mag)
+        noiseSum += mag
+        if (noiseBuffer.size > phoneThresholdWindow) {
+            noiseSum -= noiseBuffer.removeFirst()
+        }
+        val noiseAvg = noiseSum / noiseBuffer.size
+
+        return (energyAvg > noiseAvg * thresholdParam)
+    }
 }
