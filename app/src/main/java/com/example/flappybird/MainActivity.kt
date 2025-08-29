@@ -7,6 +7,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Log
+import com.example.flappybird.FeatureExtractor.projectPCA
 import com.example.flappybird.databinding.ActivityMainBinding
 import java.io.OutputStream
 import java.net.Socket
@@ -22,7 +23,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
     private var accelSensor: Sensor? = null
-//    private var gyroSensor: Sensor? = null
+    private var gyroSensor: Sensor? = null
 
     // PC의 IP와 포트 (PC에서 Python 서버 실행 중이어야 함)
     private val serverIP = "192.168.0.3"   // 집 Wi-Fi 환경에서 PC IP 입력
@@ -30,18 +31,20 @@ class MainActivity : Activity(), SensorEventListener {
     private var socket: Socket? = null
     private var output: OutputStream? = null
 
-    private val debounceMs = 400L
+    private val debounceMs = 1000L
     private var lastTriggerTime = 0L
 
     // 데이터 윈도우
     private val windowSize = 400
-    private val stepSize = windowSize / 2  // 200
+    private val stepSize = windowSize / 4 // 100
 
     private val accelWindow = ArrayList<FloatArray>()
-//    private val gyroWindow = ArrayList<FloatArray>()
+    private val gyroWindow = ArrayList<FloatArray>()
 
     // KNN 분류기
     private lateinit var knn: KNNClassifier
+
+    private lateinit var pcaMatrix: Array<FloatArray>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,15 +53,21 @@ class MainActivity : Activity(), SensorEventListener {
         setContentView(binding.root)
 
         // JSON 로드 → KNN 초기화
+
+        pcaMatrix = loadPCAMatrix()
         val samples = loadSamplesFromCsv()
-        knn = KNNClassifier(1, samples)
+        val reducedSamples = samples.map {
+            val reduced = projectPCA(it.features, pcaMatrix)
+            GestureSample(reduced, it.label)
+        }
+        knn = KNNClassifier(5, reducedSamples)
         binding.statusText.text = "Loaded ${samples.size} samples"
 
         binding.statusText.text = "Starting"
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-//        gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
         // 서버 연결 (별도 스레드에서 실행)
         thread {
@@ -79,9 +88,9 @@ class MainActivity : Activity(), SensorEventListener {
         accelSensor?.also {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
         }
-//        gyroSensor?.also {
-//            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
-//        }
+        gyroSensor?.also {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
+        }
     }
 
     override fun onPause() {
@@ -101,35 +110,66 @@ class MainActivity : Activity(), SensorEventListener {
             Sensor.TYPE_ACCELEROMETER -> {
                 accelWindow.add(floatArrayOf(event.values[0], event.values[1], event.values[2] - 9.8f))
             }
-//            Sensor.TYPE_GYROSCOPE -> {
-//                gyroWindow.add(floatArrayOf(event.values[0], event.values[1], event.values[2]))
-//            }
+            Sensor.TYPE_GYROSCOPE -> {
+                gyroWindow.add(floatArrayOf(event.values[0], event.values[1], event.values[2]))
+            }
         }
 
 //        // 둘 다 충분히 쌓였을 때 처리
-//        if (accelWindow.size >= windowSize && gyroWindow.size >= windowSize) {
-//            val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
-//            val gyroFeatures  = FeatureExtractor.extractFFT(gyroWindow.subList(0, windowSize))
-//            val combinedFeatures = accelFeatures + gyroFeatures
-//
-//            val label = knn.classify(combinedFeatures)
-//            if (label != "UNKNOWN") sendGesture(label)
-//
-//            accelWindow.subList(0, stepSize).clear()
-//            gyroWindow.subList(0, stepSize).clear()
-//        }
+        if (accelWindow.size >= windowSize && gyroWindow.size >= windowSize) {
+            if (!shouldTrigger(accelWindow, gyroWindow)) {
+                binding.statusText.text = "IDLE"
+                accelWindow.subList(0, stepSize).clear()
+                gyroWindow.subList(0, stepSize).clear()
+                return
+            }
 
-        if (accelWindow.size >= windowSize) {
             val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
+            val gyroFeatures  = FeatureExtractor.extractFFT(gyroWindow.subList(0, windowSize))
 
-            val label = knn.classify(accelFeatures)
+            val combinedFeatures = accelFeatures + gyroFeatures
+
+            val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
+
+            Log.d("WatchApp", "Coordinate: ${reducedAccel.joinToString(",")}")
+
+            val label = knn.classify(reducedAccel)
             if (label != "UNKNOWN") sendGesture(label)
 
             accelWindow.subList(0, stepSize).clear()
+            gyroWindow.subList(0, stepSize).clear()
         }
+
+//        if (accelWindow.size >= windowSize) {
+//            if (!shouldTrigger(accelWindow)) {
+//                binding.statusText.text = "IDLE"
+//                accelWindow.subList(0, stepSize).clear()
+//                return
+//            }
+//
+//            val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
+//            val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
+//
+//            val label = knn.classifyN(reducedAccel)
+//            if (label != "UNKNOWN") sendGesture(label)
+//
+//            accelWindow.subList(0, stepSize).clear()
+//        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun shouldTrigger(accelWindow: List<FloatArray>, gyroWindow: List<FloatArray>, threshold: Float = 0.5f): Boolean {
+        // window: [ [ax,ay,az], ... ]
+        val mags = accelWindow.map { v ->
+            sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        }
+        val peak = mags.maxOrNull() ?: 0f
+        if (peak > threshold) {
+            Log.d("WatchApp", "Peak magnitude: $peak")
+        }
+        return peak > threshold
+    }
 
     private fun sendGesture(label: String) {
         val now = System.currentTimeMillis()
@@ -166,4 +206,16 @@ class MainActivity : Activity(), SensorEventListener {
 
         return samples
     }
+
+    private fun loadPCAMatrix(fileName: String = "pca_accel_z.csv"): Array<FloatArray> {
+        val inputStream = assets.open(fileName)
+        val reader = CSVReader(InputStreamReader(inputStream))
+
+        val allRows = reader.readAll()
+        // CSV는 숫자만 들어있다고 가정 (header 없음)
+        return Array(allRows.size) { i ->
+            allRows[i].map { it.toFloat() }.toFloatArray()
+        }
+    }
+
 }

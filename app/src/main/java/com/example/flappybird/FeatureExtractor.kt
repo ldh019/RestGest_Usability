@@ -6,6 +6,24 @@ import kotlin.math.log
 import kotlin.math.log10
 
 object FeatureExtractor {
+    // PCA projection
+// input: FloatArray(D) -> raw feature (예: accel_z 200포인트)
+// W: Array<FloatArray> (D x K) -> MATLAB에서 저장한 projection matrix
+// return: FloatArray(K) -> 축소된 feature
+    fun projectPCA(input: FloatArray, W: Array<FloatArray>): FloatArray {
+        val D = input.size
+        val K = 2
+        val result = FloatArray(K) { 0f }
+
+        for (k in 0 until K) {
+            var sum = 0f
+            for (d in 0 until D) {
+                sum += input[d] * W[d][k]
+            }
+            result[k] = sum
+        }
+        return result
+    }
 
     fun extractFFT(window: List<FloatArray>, sampleRate: Int = 400): FloatArray {
         val n = window.size
