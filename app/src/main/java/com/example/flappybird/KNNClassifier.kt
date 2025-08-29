@@ -1,15 +1,16 @@
 package com.example.flappybird
 
 import android.util.Log
+import kotlin.math.sqrt
 
-data class GestureSample(val features: FloatArray, val label: String)
+data class GestureSample(val features: DoubleArray, val label: String)
 
 class KNNClassifier(
     private val k: Int,
     private val samples: List<GestureSample>
 ) {
 
-    fun classify(input: FloatArray): String {
+    fun classify(input: DoubleArray): String {
         // 1. 각 학습 샘플과 거리 계산
         val neighbors = samples.map {
             val dist = euclidean(input, it.features)
@@ -26,7 +27,7 @@ class KNNClassifier(
         return classified
     }
 
-    fun classifyN(input: FloatArray): String {
+    fun classifyN(input: DoubleArray): String {
         // 클래스별 그룹핑
         val classGroups = samples.groupBy { it.label }
 
@@ -43,13 +44,13 @@ class KNNClassifier(
     }
 
 
-    private fun euclidean(a: FloatArray, b: FloatArray): Float {
+    private fun euclidean(a: DoubleArray, b: DoubleArray): Double {
         require(a.size == b.size) { "Feature size mismatch: ${a.size} vs ${b.size}" }
-        var sum = 0f
+        var sum = 0.0
         for (i in a.indices) {
             val d = a[i] - b[i]
             sum += d * d
         }
-        return kotlin.math.sqrt(sum)
+        return sqrt(sum)
     }
 }

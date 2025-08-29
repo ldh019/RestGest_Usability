@@ -1,22 +1,17 @@
 package com.example.flappybird
 
-import android.util.Log
+import org.jtransforms.fft.DoubleFFT_1D
 import kotlin.math.ln1p
-import kotlin.math.log
-import kotlin.math.log10
+import kotlin.math.sqrt
 
 object FeatureExtractor {
-    // PCA projection
-// input: FloatArray(D) -> raw feature (예: accel_z 200포인트)
-// W: Array<FloatArray> (D x K) -> MATLAB에서 저장한 projection matrix
-// return: FloatArray(K) -> 축소된 feature
-    fun projectPCA(input: FloatArray, W: Array<FloatArray>): FloatArray {
+    fun projectPCA(input: DoubleArray, W: Array<DoubleArray>): DoubleArray {
         val D = input.size
-        val K = 2
-        val result = FloatArray(K) { 0f }
+        val K = 3
+        val result = DoubleArray(K) { 0.0 }
 
         for (k in 0 until K) {
-            var sum = 0f
+            var sum = 0.0
             for (d in 0 until D) {
                 sum += input[d] * W[d][k]
             }
@@ -25,31 +20,47 @@ object FeatureExtractor {
         return result
     }
 
-    fun extractFFT(window: List<FloatArray>, sampleRate: Int = 400): FloatArray {
+    fun extractFFT(window: List<DoubleArray>, sampleRate: Int = 400): DoubleArray {
         val n = window.size
         val dim = window[0].size   // 3축
 
-        val features = mutableListOf<Float>()
+        val features = mutableListOf<Double>()
 
-//        for (axis in 0 until dim) {
-        val axis = 2
+        for (axis in 0 until dim) {
+//        val axis = 2
             // 1) 신호 추출
-            val signal = DoubleArray(n) { i -> window[i][axis].toDouble() }
+            val signal = DoubleArray(n) { i -> window[i][axis] }
 
-            // 2) FFT
-            val spectrum = fft(signal)
+//            // 2) FFT
+//            val spectrum = fft(signal)
+//
+//            // 3) Magnitude
+//            val mags = spectrum.map { (re, im) -> sqrt(re*re + im*im) }
 
-            // 3) Magnitude
-            val mags = spectrum.map { (re, im) -> kotlin.math.sqrt(re*re + im*im) }
+            val fft = DoubleFFT_1D(n.toLong())
+            val fftData = DoubleArray(2 * n)
+
+            for (i in signal.indices) {
+                fftData[2*i] = signal[i]
+                fftData[2*i + 1] = 0.0
+            }
+
+            fft.complexForward(fftData)
+
+            val mags = List(n) { i ->
+                val re = fftData[2*i]
+                val im = fftData[2*i + 1]
+                sqrt(re*re + im*im)
+            }
 
             val logged = mags.map { m -> ln1p(m) }
 
             // 4) 1~200 Hz 부분만 추가 (index 1~200)
             val sub = logged.subList(1, n/2 + 1)   // 1..200
-            features.addAll(sub.map { it.toFloat() })
-//        }
+            features.addAll(sub.map { it })
+        }
 
-        return features.toFloatArray()
+        return features.toDoubleArray()
     }
 
     private fun fft(x: DoubleArray): List<Pair<Double, Double>> {

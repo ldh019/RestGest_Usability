@@ -45,4 +45,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("com.opencsv:opencsv:5.9")
+    implementation("com.github.wendykierp:JTransforms:3.1")
 }
