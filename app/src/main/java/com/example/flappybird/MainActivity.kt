@@ -116,50 +116,69 @@ class MainActivity : Activity(), SensorEventListener {
         }
 
 //        // 둘 다 충분히 쌓였을 때 처리
-        if (accelWindow.size >= windowSize && gyroWindow.size >= windowSize) {
-            if (!shouldTrigger(accelWindow, gyroWindow)) {
-                binding.statusText.text = "IDLE"
-                accelWindow.subList(0, stepSize).clear()
-                gyroWindow.subList(0, stepSize).clear()
-                return
-            }
-
-            val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
-            val gyroFeatures  = FeatureExtractor.extractFFT(gyroWindow.subList(0, windowSize))
-
-            val combinedFeatures = accelFeatures + gyroFeatures
-
-            val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
-
-            Log.d("WatchApp", "Coordinate: ${reducedAccel.joinToString(",")}")
-
-            val label = knn.classify(reducedAccel)
-            if (label != "UNKNOWN") sendGesture(label)
-
-            accelWindow.subList(0, stepSize).clear()
-            gyroWindow.subList(0, stepSize).clear()
-        }
-
-//        if (accelWindow.size >= windowSize) {
-//            if (!shouldTrigger(accelWindow)) {
+//        if (accelWindow.size >= windowSize && gyroWindow.size >= windowSize) {
+//            if (!shouldTrigger(accelWindow, gyroWindow)) {
 //                binding.statusText.text = "IDLE"
 //                accelWindow.subList(0, stepSize).clear()
+//                gyroWindow.subList(0, stepSize).clear()
 //                return
 //            }
 //
 //            val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
+//            val gyroFeatures  = FeatureExtractor.extractFFT(gyroWindow.subList(0, windowSize))
+//
+//            val combinedFeatures = accelFeatures + gyroFeatures
+//
 //            val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
 //
-//            val label = knn.classifyN(reducedAccel)
+//            Log.d("WatchApp", "Coordinate: ${reducedAccel.joinToString(",")}")
+//
+//            val label = knn.classify(reducedAccel)
 //            if (label != "UNKNOWN") sendGesture(label)
 //
 //            accelWindow.subList(0, stepSize).clear()
+//            gyroWindow.subList(0, stepSize).clear()
 //        }
+
+        if (accelWindow.size >= windowSize) {
+            if (!shouldTrigger(accelWindow)) {
+                binding.statusText.text = "IDLE"
+                accelWindow.subList(0, stepSize).clear()
+                return
+            }
+
+            val aligned = alignWindow(accelWindow, windowSize)
+            if (aligned != null) {
+                val accelFeatures = FeatureExtractor.extractFFT(accelWindow.subList(0, windowSize))
+                val reducedAccel = projectPCA(accelFeatures, pcaMatrix)
+
+                val label = knn.classifyN(reducedAccel)
+                if (label != "UNKNOWN") sendGesture(label)
+            }
+            accelWindow.subList(0, stepSize).clear()
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun shouldTrigger(accelWindow: List<FloatArray>, gyroWindow: List<FloatArray>, threshold: Float = 0.5f): Boolean {
+    private fun alignWindow(window: List<FloatArray>, size: Int): List<FloatArray>? {
+        // z축 가속도의 절대값이 가장 큰 지점을 가운데로 맞춤
+        val mags = window.map { v ->
+            sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        }
+
+        val peakIdx = mags.indices.maxByOrNull { mags[it] } ?: return null
+        val half = size / 2
+
+        val start = (peakIdx - half).coerceAtLeast(0)
+        val end = (start + size).coerceAtMost(window.size)
+
+        if (end - start < size) return null
+
+        return window.subList(start, start + size)
+    }
+
+    private fun shouldTrigger(accelWindow: List<FloatArray>, gyroWindow: List<FloatArray> = emptyList(), threshold: Float = 0.5f): Boolean {
         // window: [ [ax,ay,az], ... ]
         val mags = accelWindow.map { v ->
             sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
