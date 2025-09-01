@@ -128,13 +128,13 @@ class MainActivity : Activity(), SensorEventListener {
         if (accelWindow.size >= bufferSize && gyroWindow.size >= bufferSize) {
             val phoneIdx = bufferSize - (bufferSize / 2)
 
-            val energyStart = (phoneIdx - phoneSearchWindow).coerceAtLeast(0)
-            val energyAvg = mags.subList(energyStart, phoneIdx).average()
+            val energyStart = (phoneIdx - phoneSearchWindow + 1).coerceAtLeast(0)
+            val energyAvg = mags.subList(energyStart, phoneIdx + 1).average()
 
-            val noiseStart = (phoneIdx - phoneThresholdWindow).coerceAtLeast(0)
-            val noiseAvg = mags.subList(noiseStart, phoneIdx).average() * thresholdParam
-            val noiseAvg2 = mags.subList(noiseStart, phoneIdx).average() * 1.1
-            val noiseAvg3 = mags.subList(noiseStart, phoneIdx).average() * 1.05
+            val noiseStart = (phoneIdx - phoneThresholdWindow + 1).coerceAtLeast(0)
+            val noiseAvg = mags.subList(noiseStart, phoneIdx + 1).average() * thresholdParam
+            val noiseAvg2 = mags.subList(noiseStart, phoneIdx + 1).average() * 1.1
+            val noiseAvg3 = mags.subList(noiseStart, phoneIdx + 1).average() * 1.05
 
             if (energyAvg > noiseAvg3) {
                 Log.d(
