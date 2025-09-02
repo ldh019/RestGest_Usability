@@ -1,6 +1,7 @@
 package com.example.flappybird
 
 import android.app.Activity
+import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -86,6 +87,12 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onPause() {
         super.onPause()
         sensorManager.unregisterListener(this)
+    }
+
+    override fun onBackPressed() {
+        // 뒤로가기 버튼 누르면 소켓 닫고 ConnectionActivity로 돌아가기
+        socket?.close()
+        super.onBackPressed()
     }
 
     override fun onDestroy() {
@@ -184,7 +191,15 @@ class MainActivity : Activity(), SensorEventListener {
             Log.d("WatchApp", "Window sent: ${window.size} rows")
         } catch (e: Exception) {
             Log.e("WatchApp", "Send failed: ${e.message}")
-            withContext(Dispatchers.Main) { binding.statusText.text = "Send Failed" }
+            // 연결 끊김 발생 시 ConnectionActivity로 돌아가기
+            withContext(Dispatchers.Main) {
+                binding.statusText.text = "Send Failed. Disconnected."
+                // 소켓을 닫고 ConnectionActivity로 돌아갑니다.
+                socket?.close()
+                val intent = Intent(this@MainActivity, ConnectionActivity::class.java)
+                startActivity(intent)
+                finish()
+            }
         }
     }
 }
