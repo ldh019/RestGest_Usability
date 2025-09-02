@@ -43,36 +43,15 @@ class ConnectionActivity : Activity() {
                 return@setOnClickListener
             }
 
-            val port = portStr.toInt()
-            statusTextView.text = "연결 중..."
-
-            // 백그라운드에서 연결 시도
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val socket = Socket(ip, port)
-                    Log.d("ConnectionActivity", "연결 성공")
-                    withContext(Dispatchers.Main) {
-                        statusTextView.text = "연결 완료!"
-                    }
-                    // 연결 성공 시 MainActivity로 이동
-                    val intent = Intent(this@ConnectionActivity, MainActivity::class.java).apply {
-                        putExtra("IP_ADDRESS", ip)
-                        putExtra("PORT_NUMBER", port)
-                    }
-                    startActivity(intent)
-                    finish() // 현재 액티비티 종료
-                } catch (e: ConnectException) {
-                    Log.e("ConnectionActivity", "연결 실패: ${e.message}")
-                    withContext(Dispatchers.Main) {
-                        statusTextView.text = "연결 실패: ${e.message}"
-                    }
-                } catch (e: Exception) {
-                    Log.e("ConnectionActivity", "오류 발생: ${e.message}")
-                    withContext(Dispatchers.Main) {
-                        statusTextView.text = "오류: ${e.message}"
-                    }
-                }
+            // ConnectionActivity에서는 연결만 시도하고,
+            // 실제 데이터 송수신은 MainActivity에서 담당합니다.
+            // 아래의 코드를 삭제하고 IP와 Port만 MainActivity로 전달합니다.
+            val intent = Intent(this@ConnectionActivity, MainActivity::class.java).apply {
+                putExtra("IP_ADDRESS", ip)
+                putExtra("PORT_NUMBER", portStr.toInt())
             }
+            startActivity(intent)
+            finish()
         }
     }
 }
