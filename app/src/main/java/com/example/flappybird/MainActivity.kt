@@ -35,13 +35,13 @@ class MainActivity : Activity(), SensorEventListener {
     private val phoneThresholdWindow = (phoneWindow * 1.0).toInt()   // MATLAB Y=1
     private val thresholdParam = 1.3f                               // MATLAB alpha=1.3
 
-    private val bufferCapacity = windowSize * 2 // 버퍼 크기
+    private val bufferCapacity = phoneWindow * 2 // 버퍼 크기
 
     // 버퍼
-    private val accelWindow = ArrayList<AccelSample>()
-    private val gyroWindow = ArrayList<GyroSample>()
-    private val mags = ArrayList<Float>()
-    private val energyWindow = ArrayList<Double>()
+    private val accelBuffer = ArrayList<AccelSample>()
+    private val gyroBuffer = ArrayList<GyroSample>()
+    private val magsBuffer = ArrayList<Float>()
+    private val energyBuffer = ArrayList<Double>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,13 +93,13 @@ class MainActivity : Activity(), SensorEventListener {
                 val ay = event.values[1]
                 val az = event.values[2] - 9.8f
 
-                accelWindow.add(AccelSample(at, ax, ay, az))
-                mags.add(sqrt(ax * ax + ay * ay + az * az))
+                accelBuffer.add(AccelSample(at, ax, ay, az))
+                magsBuffer.add(sqrt(ax * ax + ay * ay + az * az))
 
-                val currentIdx = mags.size - 1
+                val currentIdx = magsBuffer.size - 1
                 val energyStart = (currentIdx - phoneSearchWindow + 1).coerceAtLeast(0)
-                val energyAvg = mags.subList(energyStart, currentIdx + 1).average()
-                energyWindow.add(energyAvg)
+                val energyAvg = magsBuffer.subList(energyStart, currentIdx + 1).average()
+                energyBuffer.add(energyAvg)
             }
             Sensor.TYPE_GYROSCOPE -> {
                 gyroBuffer.add(GyroSample(event.timestamp, event.values[0], event.values[1], event.values[2]))
@@ -110,12 +110,12 @@ class MainActivity : Activity(), SensorEventListener {
         if (accelBuffer.size >= bufferCapacity && gyroBuffer.size >= bufferCapacity) {
             val centerIdx = bufferCapacity / 2
 
-            val energyAvg = energyWindow[phoneIdx]
+            val energyAvg = energyBuffer[centerIdx]
 
-            val noiseStart = (phoneIdx - phoneThresholdWindow + 1).coerceAtLeast(0)
-            val noiseAvg = energyWindow.subList(noiseStart, phoneIdx + 1).average() * thresholdParam
-            val noiseAvg2 = energyWindow.subList(noiseStart, phoneIdx + 1).average() * 1.2
-            val noiseAvg3 = energyWindow.subList(noiseStart, phoneIdx + 1).average() * 1.1
+            val noiseStart = (centerIdx - phoneThresholdWindow + 1).coerceAtLeast(0)
+            val noiseAvg = energyBuffer.subList(noiseStart, centerIdx + 1).average() * thresholdParam
+            val noiseAvg2 = energyBuffer.subList(noiseStart, centerIdx + 1).average() * 1.2
+            val noiseAvg3 = energyBuffer.subList(noiseStart, centerIdx + 1).average() * 1.1
 
             if (energyAvg > noiseAvg3) {
                 Log.d(
@@ -128,12 +128,12 @@ class MainActivity : Activity(), SensorEventListener {
                 Log.d("WatchApp", "Gesture Detected")
 
                 // --- 최종 window 추출 ---
-                val startIdx = (phoneIdx - (0.2 * phoneWindow).toInt()).coerceAtLeast(0)
-                val endIdx = (startIdx + phoneWindow).coerceAtMost(accelWindow.size)
+                val startIdx = (centerIdx - (0.2 * phoneWindow).toInt()).coerceAtLeast(0)
+                val endIdx = (startIdx + phoneWindow).coerceAtMost(accelBuffer.size)
 
-                if (windowEndIdx - windowStartIdx == windowSize) {
+                if (endIdx - startIdx == phoneWindow) {
                     val combinedWindow = mutableListOf<String>()
-                    for (i in windowStartIdx until windowEndIdx) {
+                    for (i in startIdx until endIdx) {
                         val row = "${accelBuffer[i].timestamp}," +
                                 "${accelBuffer[i].ax},${accelBuffer[i].ay},${accelBuffer[i].az}," +
                                 "${gyroBuffer[i].timestamp}," +
@@ -145,22 +145,22 @@ class MainActivity : Activity(), SensorEventListener {
                     CoroutineScope(Dispatchers.Main).launch {
                         sendWindowToPC(combinedWindow)
                         binding.statusText.text = "Gesture Sent!"
-                        Log.d("WatchApp", "Window extracted at phoneIdx=$phoneIdx")
+                        Log.d("WatchApp", "Window extracted at phoneIdx=$centerIdx")
                     }
 
                     // MATLAB: phoneIdx = phoneIdx + phoneWindow 효과 → windowSize만큼 삭제
-                    accelWindow.subList(0, phoneWindow).clear()
-                    gyroWindow.subList(0, phoneWindow).clear()
-                    mags.subList(0, phoneWindow).clear()
-                    energyWindow.subList(0, phoneWindow).clear()
+                    accelBuffer.subList(0, phoneWindow).clear()
+                    gyroBuffer.subList(0, phoneWindow).clear()
+                    magsBuffer.subList(0, phoneWindow).clear()
+                    energyBuffer.subList(0, phoneWindow).clear()
                 }
             } else { // 제스처 미감지
                 binding.statusText.text = "No Gesture"
 
-                accelWindow.removeAt(0)
-                gyroWindow.removeAt(0)
-                mags.removeAt(0)
-                energyWindow.removeAt(0)
+                accelBuffer.removeAt(0)
+                gyroBuffer.removeAt(0)
+                magsBuffer.removeAt(0)
+                energyBuffer.removeAt(0)
             }
         }
     }
