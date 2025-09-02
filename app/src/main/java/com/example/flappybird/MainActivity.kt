@@ -130,15 +130,7 @@ class MainActivity : Activity(), SensorEventListener {
 
             val noiseStart = (centerIdx - phoneThresholdWindow + 1).coerceAtLeast(0)
             val noiseAvg = energyBuffer.subList(noiseStart, centerIdx + 1).average() * thresholdParam
-            val noiseAvg2 = energyBuffer.subList(noiseStart, centerIdx + 1).average() * 1.2
-            val noiseAvg3 = energyBuffer.subList(noiseStart, centerIdx + 1).average() * 1.1
 
-            if (energyAvg > noiseAvg3) {
-                Log.d(
-                    "WatchApp",
-                    "1.3 : ${energyAvg > noiseAvg}, 1.2 : ${energyAvg > noiseAvg2}, 1.1 : ${energyAvg > noiseAvg3}"
-                )
-            }
             if (energyAvg > noiseAvg) {
                 binding.statusText.text = "Gesture Detected"
                 Log.d("WatchApp", "Gesture Detected")
