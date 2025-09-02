@@ -24,18 +24,18 @@ class MainActivity : Activity(), SensorEventListener {
     private var gyroSensor: Sensor? = null
 
     // PC 서버 설정
-    private val serverIP = "165.194.27.190" // PC의 IP 주소로 변경
-    private val serverPort = 9091
+    private var serverIP: String? = null
+    private var serverPort: Int = -1
     private var socket: Socket? = null
     private var output: OutputStream? = null
 
     // detection 파라미터
     private val phoneWindow = 400
-    private val phoneSearchWindow = (phoneWindow * 0.5).toInt()      // MATLAB X=0.5
-    private val phoneThresholdWindow = (phoneWindow * 1.0).toInt()   // MATLAB Y=1
-    private val thresholdParam = 1.3f                               // MATLAB alpha=1.3
+    private val phoneSearchWindow = (phoneWindow * 0.5).toInt()
+    private val phoneThresholdWindow = (phoneWindow * 1.0).toInt()
+    private val thresholdParam = 1.3f
 
-    private val bufferCapacity = phoneWindow * 2 // 버퍼 크기
+    private val bufferCapacity = phoneWindow * 2
 
     // 버퍼
     private val accelBuffer = ArrayList<AccelSample>()
@@ -49,6 +49,16 @@ class MainActivity : Activity(), SensorEventListener {
         setContentView(binding.root)
         binding.statusText.text = "Initializing..."
 
+        // Intent에서 IP와 Port 정보 받기
+        serverIP = intent.getStringExtra("IP_ADDRESS")
+        serverPort = intent.getIntExtra("PORT_NUMBER", -1)
+
+        if (serverIP == null || serverPort == -1) {
+            binding.statusText.text = "Connection info missing."
+            Log.e("MainActivity", "Connection info missing from intent.")
+            return
+        }
+
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -58,7 +68,7 @@ class MainActivity : Activity(), SensorEventListener {
             try {
                 socket = Socket(serverIP, serverPort)
                 output = socket?.getOutputStream()
-                Log.d("WatchApp", "Connected to server")
+                Log.d("WatchApp", "Connected to server at $serverIP:$serverPort")
                 runOnUiThread { binding.statusText.text = "Connected" }
             } catch (e: Exception) {
                 runOnUiThread { binding.statusText.text = "Connection Failed: ${e.message}" }
@@ -106,7 +116,6 @@ class MainActivity : Activity(), SensorEventListener {
             }
         }
 
-        // 두 센서 데이터가 충분히 모였을 때 처리
         if (accelBuffer.size >= bufferCapacity && gyroBuffer.size >= bufferCapacity) {
             val centerIdx = bufferCapacity / 2
 
@@ -127,7 +136,6 @@ class MainActivity : Activity(), SensorEventListener {
                 binding.statusText.text = "Gesture Detected"
                 Log.d("WatchApp", "Gesture Detected")
 
-                // --- 최종 window 추출 ---
                 val startIdx = (centerIdx - (0.2 * phoneWindow).toInt()).coerceAtLeast(0)
                 val endIdx = (startIdx + phoneWindow).coerceAtMost(accelBuffer.size)
 
@@ -141,22 +149,19 @@ class MainActivity : Activity(), SensorEventListener {
                         combinedWindow.add(row)
                     }
 
-                    // PC로 윈도우 전송 (코루틴 사용)
                     CoroutineScope(Dispatchers.Main).launch {
                         sendWindowToPC(combinedWindow)
                         binding.statusText.text = "Gesture Sent!"
                         Log.d("WatchApp", "Window extracted at phoneIdx=$centerIdx")
                     }
 
-                    // MATLAB: phoneIdx = phoneIdx + phoneWindow 효과 → windowSize만큼 삭제
                     accelBuffer.subList(0, phoneWindow).clear()
                     gyroBuffer.subList(0, phoneWindow).clear()
                     magsBuffer.subList(0, phoneWindow).clear()
                     energyBuffer.subList(0, phoneWindow).clear()
                 }
-            } else { // 제스처 미감지
+            } else {
                 binding.statusText.text = "No Gesture"
-
                 accelBuffer.removeAt(0)
                 gyroBuffer.removeAt(0)
                 magsBuffer.removeAt(0)
@@ -167,7 +172,6 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    // PC로 센서 윈도우 데이터 전송
     private suspend fun sendWindowToPC(window: List<String>) = withContext(Dispatchers.IO) {
         try {
             val sb = StringBuilder()
@@ -185,6 +189,5 @@ class MainActivity : Activity(), SensorEventListener {
     }
 }
 
-// 센서 데이터 모델 클래스
 data class AccelSample(val timestamp: Long, val ax: Float, val ay: Float, val az: Float)
 data class GyroSample(val timestamp: Long, val gx: Float, val gy: Float, val gz: Float)
