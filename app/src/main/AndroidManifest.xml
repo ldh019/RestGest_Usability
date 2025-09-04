@@ -7,7 +7,6 @@
     <!-- 네트워크 상태 확인용 (선택적) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
 
     <application

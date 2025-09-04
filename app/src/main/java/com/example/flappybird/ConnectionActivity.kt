@@ -30,6 +30,7 @@ class ConnectionActivity : Activity() {
         connectButton = findViewById(R.id.connectButton)
         statusTextView = findViewById(R.id.statusText)
 
+        ipEditText.setText("192.168.0.7")
         portEditText.setText("9090") // 기본 포트 설정
 
         connectButton.setOnClickListener {
